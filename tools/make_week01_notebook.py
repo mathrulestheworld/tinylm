@@ -11,13 +11,22 @@ md(r"""
 
 *Generative AI from First Principles* · [course page](https://mathrulestheworld.github.io/genai-first-principles/)
 
-Every model in this course is trained by gradient descent, and every gradient is computed by **reverse-mode automatic differentiation**. This notebook builds that machinery from scratch in about 300 lines of NumPy ([`tinylm/autograd.py`](../tinylm/autograd.py)) and uses it to train two classifiers.
+Every model in this course is trained by gradient descent, and every gradient is computed by **reverse-mode automatic differentiation**. This notebook works through that machinery, written from scratch in about 300 lines of NumPy ([`tinylm/autograd.py`](../tinylm/autograd.py)), and then uses it to train two classifiers.
 
-1. A computation as a graph, and its gradient.
-2. Why reverse mode is cheap: the gradient costs a constant multiple of the function.
-3. Checking gradients against finite differences, and against PyTorch.
-4. Logistic regression on a two-class problem.
-5. A two-layer network on the same problem, and then on handwritten digits.
+**Part A, the live walkthrough** (the lecture's twenty-minute hands-on segment):
+
+1. What a tensor holds, and a small forward computation.
+2. Walking the graph backwards; a value used twice.
+3. Gradient shapes: a matrix product, a reduction, and a broadcast bias.
+4. Checking a derivative with finite differences.
+5. One gradient step: autograd computes gradients, the optimizer updates parameters.
+
+**Part B, beyond the lecture:**
+
+6. Why reverse mode is cheap: the gradient costs a constant multiple of the function.
+7. Checking gradients: the choice of step size, and a comparison with PyTorch.
+8. Logistic regression on a two-class problem.
+9. A two-layer network on the same problem, and then on handwritten digits.
 
 From Week 2 on we use PyTorch, whose autograd does exactly what this engine does, on GPUs and at scale. The point of this week is that nothing about it is magic.
 """)
@@ -34,12 +43,54 @@ from tinylm.optim import SGD, Adam
 
 plt.rcParams.update({"figure.dpi": 110, "axes.spines.top": False, "axes.spines.right": False})
 rng = np.random.default_rng(0)
+np.set_printoptions(precision=4, suppress=True)
 """)
 
 md(r"""
-## 1. A computation as a graph
+# Part A: the live walkthrough
 
-Take $f(x, y) = \log(1 + e^{xy}) + x^2$. Each arithmetic step creates a new `Tensor` that remembers its inputs and how to pass a gradient back to them. Calling `backward()` on the output walks this graph from the output to the inputs.
+## 1. What a tensor holds
+
+A `Tensor` wraps a NumPy array, its **data**. If gradients should flow to it (`requires_grad=True`), then after a backward pass it also holds a **gradient** of the same shape. A tensor produced by an operation remembers two more things: its **parents**, the tensors it was computed from, and a **backward rule** that turns a gradient for the output into gradients for the parents.
+
+Below is a small forward computation: four examples with three features each, a linear layer with two outputs, and a scalar loss, the mean of the squared outputs.
+""")
+
+code(r"""
+X = Tensor(rng.normal(size=(4, 3)))                       # inputs: 4 examples, 3 features (no gradient needed)
+W = Tensor(rng.normal(size=(3, 2)), requires_grad=True)   # parameters
+b = Tensor(np.array([0.5, -0.5]), requires_grad=True)
+
+Z = X @ W + b            # (4, 3) @ (3, 2) -> (4, 2); b has shape (2,) and is broadcast across the 4 rows
+L = (Z ** 2).mean()      # one number (the engine computes a mean as a sum divided by a count)
+
+def describe(t, name):
+    parents = ", ".join(p._op or "leaf" for p in t._parents) or "none"
+    print(f"{name}: shape {str(t.shape):7s} op {t._op or 'leaf':5s} parents: {parents:12s} grad: {t.grad}")
+
+for t, name in [(X, "X"), (W, "W"), (b, "b"), (Z, "Z"), (L, "L")]:
+    describe(t, name)
+print("\nL =", L.item())
+""")
+
+md(r"""
+## 2. Walking the graph backwards
+
+`L.backward()` visits the graph in reverse topological order, so that every tensor is processed after all the tensors that use it. At each node it applies the node's backward rule, the chain rule for that one operation, and passes the results to the parents. Gradients are stored only at the leaves, here `W` and `b`.
+""")
+
+code(r"""
+L.backward()
+print("order of the backward pass:", " -> ".join(n._op or "leaf" for n in L._topological_order()))
+print("W.grad =\n", W.grad)
+print("b.grad =", b.grad)
+""")
+
+md(r"""
+### A value used twice
+
+When a tensor feeds into several operations, each use sends back its own contribution, and the contributions **add**. This is the multivariable chain rule. Take the scalar function $f(x, y) = \log(1 + e^{xy}) + x^2$, in which $x$ is used twice:
+$$\frac{\partial f}{\partial x} = \underbrace{y\,\sigma(xy)}_{\text{through } \log(1+e^{xy})} + \underbrace{2x}_{\text{through } x^2}, \qquad \sigma(t) = \frac{1}{1 + e^{-t}}.$$
 """)
 
 code(r"""
@@ -58,13 +109,95 @@ def show_graph(node, depth=0, seen=None):
             show_graph(p, depth + 1, seen)
 
 show_graph(f)
-s = 1 / (1 + np.exp(-x.data * y.data))                 # sigmoid(xy), the derivative of log(1 + e^t)
-print(f"\nautograd:  df/dx = {x.grad:.6f}   df/dy = {y.grad:.6f}")
-print(f"by hand:   df/dx = {s * y.data + 2 * x.data:.6f}   df/dy = {s * x.data:.6f}")
+s = 1 / (1 + np.exp(-x.data * y.data))                 # sigmoid(xy), the derivative of log(1 + e^t) at t = xy
+print(f"\ncontribution through log(1 + e^(xy)): {s * y.data: .6f}")
+print(f"contribution through x**2:            {2 * x.data: .6f}")
+print(f"sum, by hand:                         {s * y.data + 2 * x.data: .6f}")
+print(f"autograd:  df/dx = {x.grad:.6f}   df/dy = {y.grad:.6f} (by hand {s * x.data:.6f})")
 """)
 
 md(r"""
-## 2. Reverse mode is a sequence of vector–Jacobian products
+## 3. Gradient shapes
+
+The gradient of a scalar loss with respect to a tensor has the **same shape as the tensor**. For the linear layer, write $G = \partial L/\partial Z$, a $4\times 2$ array; here $G = 2Z/8$, since $L$ averages eight squares. The backward rules of the three operations are:
+
+| Forward | Backward |
+|---|---|
+| $Z = XW$ (matrix product) | $\partial L/\partial W = X^\top G$, of shape $3\times 2$; and $\partial L/\partial X = G W^\top$ |
+| $L = \mathrm{mean}(Z^2)$ (reduction) | $\partial L/\partial Z = 2Z/8$: the scalar gradient is spread back over the entries that were averaged |
+| $Z = \cdots + b$, with $b$ broadcast across rows | $\partial L/\partial b = \sum_{\text{rows}} G$: each entry of $b$ was used in four rows, so its four contributions add |
+
+The last rule is the "value used twice" rule again: broadcasting is reuse. The engine implements it once, in `_unbroadcast`, which sums a gradient over every axis that broadcasting added or stretched.
+""")
+
+code(r"""
+G = 2 * Z.data / Z.data.size
+print("W.grad shape", W.grad.shape, "| equals X^T G:", np.allclose(W.grad, X.data.T @ G))
+print("b.grad shape", b.grad.shape, "  | equals G summed over rows:", np.allclose(b.grad, G.sum(axis=0)))
+""")
+
+md(r"""
+## 4. Checking a derivative
+
+**Predict first.** If $b_0$ increases by a small $h$, every entry in the first column of $Z$ increases by $h$. By how much does $L$ change? (Answer: by about $h$ times the sum of the first column of $G$, which is `b.grad[0]`.)
+
+The central difference $\big(L(b_0 + h) - L(b_0 - h)\big)/2h$ estimates the same derivative without any calculus. `gradcheck` does this for every entry of every input and reports the largest relative disagreement.
+""")
+
+code(r"""
+def loss():
+    return ((X @ W + b) ** 2).mean()
+
+h = 1e-5
+b.data[0] += h;     up = loss().item()
+b.data[0] -= 2 * h; down = loss().item()
+b.data[0] += h                                   # restore b
+print(f"dL/db0: finite difference {(up - down) / (2 * h):.8f}, autograd {b.grad[0]:.8f}")
+print(f"gradcheck over every entry of W and b: largest relative error {gradcheck(loss, [W, b]):.1e}")
+""")
+
+md(r"""
+## 5. One gradient step
+
+Autograd computes gradients; the **optimizer** decides what to do with them. Plain gradient descent moves every parameter a small step against its gradient, $\theta \leftarrow \theta - \eta\,\partial L/\partial\theta$. Because gradients accumulate across backward passes, they are cleared before each new one.
+""")
+
+code(r"""
+opt = SGD([W, b], lr=0.1)
+for step in range(3):
+    opt.zero_grad()                  # clear old gradients
+    L = loss()                       # forward
+    L.backward()                     # backward: fills W.grad and b.grad
+    opt.step()                       # W <- W - 0.1 * W.grad, and the same for b
+    print(f"step {step}: loss before the update {L.item():.4f}")
+print(f"after 3 steps:              {loss().item():.4f}")
+""")
+
+md(r"""
+Training a network is this loop with a different loss: in Part B the loss is a cross-entropy, and the model is `MLP`, a few `Linear` layers joined by nonlinearities. Nothing else changes.
+
+### Exercise (five minutes)
+
+1. Let `v` be a column vector of shape $3\times 1$ and $L = \lVert Xv\rVert^2$. Work out $\partial L/\partial v$ by hand, write it in NumPy as `by_hand`, and compare it with `v.grad` in the cell below.
+2. Change the shape of `b` in Section 1 to `(1, 2)`, and then to `(4, 2)`. Predict the shape of `b.grad` in each case, and check.
+""")
+
+code(r"""
+v = Tensor(rng.normal(size=(3, 1)), requires_grad=True)   # the engine's @ needs two dimensions
+((X @ v) ** 2).sum().backward()
+print("autograd:", v.grad.ravel())
+
+by_hand = None          # replace None with your formula, using X.data and v.data
+if by_hand is not None:
+    print("by hand: ", np.ravel(by_hand), "| agree:", np.allclose(by_hand, v.grad))
+""")
+
+md(r"""
+# Part B: beyond the lecture
+""")
+
+md(r"""
+## 6. Reverse mode is a sequence of vector–Jacobian products
 
 Write a computation as $f = f_L \circ \cdots \circ f_1$ with a scalar output. By the chain rule its gradient is
 
@@ -110,7 +243,7 @@ plt.title("The gradient costs a constant multiple of the loss"); plt.show()
 """)
 
 md(r"""
-## 3. Checking gradients
+## 7. Checking gradients
 
 A gradient implementation is easy to get subtly wrong, so every operation in the engine is checked against the **central difference**
 
@@ -159,7 +292,7 @@ except ImportError:
 """)
 
 md(r"""
-## 4. Logistic regression
+## 8. Logistic regression
 
 Now we train a model. The data are two interleaved half-moons in the plane, with labels $y \in \{0, 1\}$. Logistic regression predicts $\Pr(y = 1 \mid x) = \sigma(w^\top x + b)$ and is fitted by minimizing the average cross-entropy.
 
@@ -199,7 +332,7 @@ print(f"logistic regression: train accuracy {accuracy(logreg, Xtr, ytr):.3f}, va
 """)
 
 md(r"""
-## 5. A two-layer network
+## 9. A two-layer network
 
 A linear classifier can only draw a straight boundary, and the moons are not linearly separable. A network with one hidden layer of `tanh` units, $x \mapsto W_2 \tanh(W_1 x + b_1) + b_2$, can bend it. The code is the same; only the model changes.
 """)
@@ -261,7 +394,7 @@ This engine is the first piece of `tinylm`, the codebase that grows into a small
 1. **A new operation.** Add `softplus(x) = log(1 + e^x)` to `Tensor`, with its vector–Jacobian product, in a numerically stable form. Check it with `gradcheck`, including at $x = \pm 800$.
 2. **Reuse.** Explain why `backward` must *add* the contributions arriving at a tensor that is used more than once. Which test in `tests/test_autograd.py` fails if the addition becomes an assignment?
 3. **Forward mode.** Implement forward-mode differentiation for scalar functions with dual numbers $a + b\varepsilon$, $\varepsilon^2 = 0$. How many passes does it need for the gradient of a function of $n$ inputs, and when is forward mode the better choice?
-4. **Memory.** Reverse mode must keep every intermediate value until the backward pass reaches it. Estimate the memory of the width-1024 network in Section 2, and describe a way to trade computation for memory.
+4. **Memory.** Reverse mode must keep every intermediate value until the backward pass reaches it. Estimate the memory of the width-1024 network in Section 6, and describe a way to trade computation for memory.
 5. **Data discipline.** What goes wrong if the hidden width is chosen by test accuracy instead of validation accuracy? Simulate it: train many models with random widths and seeds, and compare the best test accuracy with the test accuracy of the model chosen on validation.
 """)
 
