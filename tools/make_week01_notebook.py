@@ -11,7 +11,7 @@ md(r"""
 
 *Generative AI from First Principles* · [course page](https://mathrulestheworld.github.io/genai-first-principles/)
 
-Every model in this course is trained by gradient descent, and every gradient is computed by **reverse-mode automatic differentiation**. This notebook works through that machinery, written from scratch in about 300 lines of NumPy ([`tinylm/autograd.py`](../tinylm/autograd.py)), and then uses it to train two classifiers.
+Every model in this course is trained by gradient descent, and every gradient is computed by **reverse-mode automatic differentiation**. This notebook works through that machinery, written from scratch in a few hundred lines of NumPy ([`tinylm/autograd.py`](../tinylm/autograd.py)), and then uses it to train two classifiers.
 
 **Part A, the live walkthrough** (the lecture's twenty-minute hands-on segment):
 
