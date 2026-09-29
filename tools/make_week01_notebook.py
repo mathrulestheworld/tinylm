@@ -37,7 +37,7 @@ sys.path.insert(0, str(pathlib.Path.cwd().parent))   # use the repository's tiny
 
 import numpy as np
 import matplotlib.pyplot as plt
-from tinylm.autograd import Tensor, cross_entropy, binary_cross_entropy_with_logits, gradcheck, numerical_grad
+from tinylm.autograd import Tensor, cross_entropy, binary_cross_entropy_with_logits, gradcheck, numerical_grad, topological_order
 from tinylm.nn import Linear, MLP
 from tinylm.optim import SGD, Adam
 
@@ -65,8 +65,8 @@ Z = X @ W + b            # (4, 3) @ (3, 2) -> (4, 2); b has shape (2,) and is br
 L = (Z ** 2).mean()      # one number (the engine computes a mean as a sum divided by a count)
 
 def describe(t, name):
-    parents = ", ".join(p._op or "leaf" for p in t._parents) or "none"
-    print(f"{name}: shape {str(t.shape):7s} op {t._op or 'leaf':5s} parents: {parents:12s} grad: {t.grad}")
+    parents = ", ".join(p.op or "leaf" for p in t.parents) or "none"
+    print(f"{name}: shape {str(t.shape):7s} op {t.op or 'leaf':5s} parents: {parents:12s} grad: {t.grad}")
 
 for t, name in [(X, "X"), (W, "W"), (b, "b"), (Z, "Z"), (L, "L")]:
     describe(t, name)
@@ -76,12 +76,13 @@ print("\nL =", L.item())
 md(r"""
 ## 2. Walking the graph backwards
 
-`L.backward()` visits the graph in reverse topological order, so that every tensor is processed after all the tensors that use it. At each node it applies the node's backward rule, the chain rule for that one operation, and passes the results to the parents. Gradients are stored only at the leaves, here `W` and `b`.
+`L.backward()` visits the graph in reverse topological order, so that every tensor is processed after all the tensors that use it. At each node it applies the node's backward rule, the chain rule for that one operation, and passes the results to the parents. Gradients are kept only at the leaves, here `W` and `b`, as in PyTorch. The whole loop is a dozen lines at the end of the `Tensor` class in `tinylm/autograd.py`.
 """)
 
 code(r"""
 L.backward()
-print("order of the backward pass:", " -> ".join(n._op or "leaf" for n in L._topological_order()))
+names = {W: "W", b: "b"}                          # the leaves, by name
+print("order of the backward pass:", " -> ".join(names.get(n, n.op) for n in reversed(topological_order(L))))
 print("W.grad =\n", W.grad)
 print("b.grad =", b.grad)
 """)
@@ -101,11 +102,11 @@ f.backward()
 
 def show_graph(node, depth=0, seen=None):
     seen = set() if seen is None else seen
-    label = node._op or ("x" if node is x else "y" if node is y else "const")
+    label = node.op or ("x" if node is x else "y" if node is y else "const")
     print("  " * depth + f"{label:8s} value = {node.data: .4f}")
-    if id(node) not in seen:
-        seen.add(id(node))
-        for p in node._parents:
+    if node not in seen:
+        seen.add(node)
+        for p in node.parents:
             show_graph(p, depth + 1, seen)
 
 show_graph(f)
@@ -127,7 +128,7 @@ The gradient of a scalar loss with respect to a tensor has the **same shape as t
 | $L = \mathrm{mean}(Z^2)$ (reduction) | $\partial L/\partial Z = 2Z/8$: the scalar gradient is spread back over the entries that were averaged |
 | $Z = \cdots + b$, with $b$ broadcast across rows | $\partial L/\partial b = \sum_{\text{rows}} G$: each entry of $b$ was used in four rows, so its four contributions add |
 
-The last rule is the "value used twice" rule again: broadcasting is reuse. The engine implements it once, in `_unbroadcast`, which sums a gradient over every axis that broadcasting added or stretched.
+The last rule is the "value used twice" rule again: broadcasting is reuse. The engine implements it once, in `unbroadcast`, which sums a gradient over every axis that broadcasting added or stretched.
 """)
 
 code(r"""
@@ -254,8 +255,8 @@ Its error has two sources. Taylor expansion gives a truncation error of order $h
 
 code(r"""
 a = Tensor(rng.normal(size=(4, 3)), requires_grad=True)
-g = lambda: (a.tanh() @ a.T).logsumexp(axis=-1).sum()
-a.zero_grad(); g().backward()
+g = lambda: (a.tanh() @ a.transpose()).logsumexp(axis=-1).sum()
+a.grad = None; g().backward()
 exact = a.grad.copy()
 
 hs = np.logspace(-12, -1, 23)
@@ -270,7 +271,7 @@ print("largest relative error, several operations:")
 b = Tensor(rng.normal(size=(3, 5)), requires_grad=True)
 checks = {
     "matmul + tanh": lambda: (a @ b).tanh().sum(),
-    "broadcast divide": lambda: (a / (b.sum(axis=1, keepdims=True).T ** 2 + 1.0)).sum(),
+    "broadcast divide": lambda: (a / (b.sum(axis=1, keepdims=True).transpose() ** 2 + 1.0)).sum(),
     "softmax cross-entropy": lambda: cross_entropy(a @ b, np.array([0, 4, 2, 1])),
     "reused tensor": lambda: (a * a * a).sum(),
 }
@@ -391,7 +392,7 @@ This engine is the first piece of `tinylm`, the codebase that grows into a small
 
 ## Exercises
 
-1. **A new operation.** Add `softplus(x) = log(1 + e^x)` to `Tensor`, with its vector–Jacobian product, in a numerically stable form. Check it with `gradcheck`, including at $x = \pm 800$.
+1. **A new operation.** Add `softplus(x) = log(1 + e^x)` to `Tensor`, following the pattern of `exp` or `tanh`: compute the output, then write its backward rule. Use a numerically stable form. Check it with `gradcheck`, including at $x = \pm 800$.
 2. **Reuse.** Explain why `backward` must *add* the contributions arriving at a tensor that is used more than once. Which test in `tests/test_autograd.py` fails if the addition becomes an assignment?
 3. **Forward mode.** Implement forward-mode differentiation for scalar functions with dual numbers $a + b\varepsilon$, $\varepsilon^2 = 0$. How many passes does it need for the gradient of a function of $n$ inputs, and when is forward mode the better choice?
 4. **Memory.** Reverse mode must keep every intermediate value until the backward pass reaches it. Estimate the memory of the width-1024 network in Section 6, and describe a way to trade computation for memory.
