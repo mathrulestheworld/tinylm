@@ -13,7 +13,7 @@ authors = [{name = "Madhusudhan Reddy Pittu"}]
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
-dev = ["matplotlib", "scikit-learn", "pytest", "jupyterlab", "nbformat", "nbconvert", "ipykernel"]
+dev = ["matplotlib", "scikit-learn", "plotly", "pytest", "jupyterlab", "nbformat", "nbconvert", "ipykernel", "torch>=2.1"]
 torch = ["torch>=2.1"]
 
 [tool.setuptools]

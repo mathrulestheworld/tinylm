@@ -6,6 +6,11 @@ __pycache__/
 build/
 dist/
 data/
-checkpoints/
+checkpoints/*
+!checkpoints/week02_fixed_window.pt
+!checkpoints/week02_char_lstm.pt
+!checkpoints/week02_char_lstm.json
+!checkpoints/week02_char_rnn.pt
+!checkpoints/week02_char_rnn.json
 .venv/
 .DS_Store
