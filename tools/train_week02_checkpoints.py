@@ -2,6 +2,7 @@
 
     python3 tools/train_week02_checkpoints.py lstm      # about 10 minutes on a laptop CPU
     python3 tools/train_week02_checkpoints.py rnn       # about 4 minutes
+    python3 tools/train_week02_checkpoints.py word      # the word-level LSTM, about 20 minutes
 
 Writes checkpoints/week02_char_<kind>.pt and checkpoints/week02_char_<kind>.json (learning
 curve, sample, gradient by distance). The fixed-window word model in
@@ -20,6 +21,28 @@ from tinylm.neural import CharRNN, char_alphabet, encode_chars, train_char_rnn, 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 kind = sys.argv[1]
+
+if kind == "word":
+    from tinylm.data import tinystories_words
+    from tinylm.neural import WordLSTM, word_index, story_tensors, story_perplexity, train_word_rnn
+    steps = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
+    data = tinystories_words(ROOT / "data")
+    vocab = data["vocab"]
+    index = word_index(vocab)
+    tx, ty = story_tensors(data["train"], index)
+    vx, vy = story_tensors(data["val"], index)
+    sx, sy = story_tensors(data["test"], index)
+    torch.manual_seed(0)
+    model = WordLSTM(len(vocab) + 1, len(vocab), embed_dim=64, hidden=128)
+    curve = train_word_rnn(model, tx, ty, vx[:1000], vy[:1000], steps=steps)   # validation: first 1,000 stories
+    (ROOT / "checkpoints").mkdir(exist_ok=True)
+    torch.save(model.state_dict(), ROOT / "checkpoints" / "week02_word_lstm.pt")
+    info = {"kind": "word lstm", "steps": steps, "params": sum(p.numel() for p in model.parameters()), "curve": curve,
+            "val_ppl": story_perplexity(model, vx, vy), "test_ppl": story_perplexity(model, sx, sy)}
+    json.dump(info, open(ROOT / "checkpoints" / "week02_word_lstm.json", "w"), indent=1)
+    print(info)
+    sys.exit()
+
 steps = int(sys.argv[2]) if len(sys.argv) > 2 else 3000
 hidden = int(sys.argv[3]) if len(sys.argv) > 3 else 256
 

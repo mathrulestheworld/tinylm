@@ -1,8 +1,11 @@
 """Neural language models in PyTorch (Week 2).
 
+BigramNet       a bigram model as a network: one weight matrix and a softmax (as in Karpathy's
+                makemore), or the same matrix factored through word vectors
 FixedWindowLM   the neural probabilistic language model of Bengio et al. (2003): the next word
                 from the previous few words, through learned word vectors and one hidden layer
 CharRNN         a character-level recurrent network, plain (tanh) or LSTM
+WordLSTM        the same recurrence over words, scored story by story like the n-gram models
 
 From Week 2 on we use PyTorch's tensors and autograd; they do what the Week 1 engine does,
 on larger arrays and faster. The models below use only basic layers (Embedding, Linear, RNN,
@@ -15,6 +18,35 @@ import torch
 import torch.nn as nn
 
 from .data import END
+
+
+# ----------------------------------------------------------------------------- bigram network
+
+class BigramNet(nn.Module):
+    """A bigram model computed by a network: q(next | previous) = softmax(scores).
+
+    With embed_dim=None the scores are row `previous` of one weight matrix W (n_inputs x
+    vocab_size), which is exactly a table of bigram probabilities; trained by gradient descent on
+    the log loss, it converges to the counts. With embed_dim=m the matrix is factored: the previous
+    token's vector C(previous) in R^m, then scores b + U C(previous), a bigram model of rank m.
+    """
+
+    def __init__(self, n_inputs, vocab_size, embed_dim=None):
+        super().__init__()
+        if embed_dim is None:
+            self.W = nn.Embedding(n_inputs, vocab_size)
+            nn.init.zeros_(self.W.weight)            # every row uniform at the start
+            self.C = None
+        else:
+            self.C = nn.Embedding(n_inputs, embed_dim)
+            self.U = nn.Linear(embed_dim, vocab_size)
+
+    def forward(self, x):
+        """x: (batch,) or (batch, 1) ids of the previous token. Returns (batch, vocab_size) scores."""
+        x = x.reshape(-1)
+        if self.C is None:
+            return self.W(x)
+        return self.U(self.C(x))
 
 
 # ----------------------------------------------------------------------------- fixed-window model
@@ -322,3 +354,91 @@ def gradient_by_distance(model, stream, length=256, batch_size=32, seed=0):
     loss.backward()
     g = e.grad.norm(dim=-1).mean(0)                      # (length,): one number per position
     return g.flip(0)                                     # g[0] = the last input, g[k] = k steps back
+
+
+# ----------------------------------------------------------------------------- word-level LSTM
+
+class WordLSTM(nn.Module):
+    """A recurrent language model over words: word vectors C, an LSTM, and a softmax over the
+    vocabulary. Inputs are word ids plus BOS (n_inputs = vocabulary + 1); outputs are the vocabulary."""
+
+    def __init__(self, n_inputs, vocab_size, embed_dim=64, hidden=128):
+        super().__init__()
+        self.C = nn.Embedding(n_inputs, embed_dim)
+        self.rnn = nn.LSTM(embed_dim, hidden, batch_first=True)
+        self.U = nn.Linear(hidden, vocab_size)
+
+    def forward(self, x, state=None):
+        """x: (batch, time) ids. Returns scores (batch, time, vocab_size) and the final state."""
+        h, state = self.rnn(self.C(x), state)
+        return self.U(h), state
+
+
+def story_tensors(stories, index):
+    """For each story, the input ids (BOS, then the words) and the targets (the words, then END)."""
+    xs = []
+    ys = []
+    for s in stories:
+        ids = [index[w] for w in s]
+        xs.append(torch.tensor([index["<s>"]] + ids))
+        ys.append(torch.tensor(ids + [index[END]]))
+    return xs, ys
+
+
+def story_perplexity(model, xs, ys, batch_size=16):
+    """Perplexity over every predicted word and END, each story read from a zero state.
+
+    These are the same prediction events as the n-gram models' (BOS context at the start)."""
+    total = 0.0
+    count = 0
+    pad_in = int(xs[0][0])                               # BOS, harmless as padding
+    order = sorted(range(len(xs)), key=lambda i: len(xs[i]))
+    model.eval()
+    with torch.no_grad():
+        for i in range(0, len(order), batch_size):
+            b = order[i:i + batch_size]
+            X = nn.utils.rnn.pad_sequence([xs[j] for j in b], batch_first=True, padding_value=pad_in)
+            Y = nn.utils.rnn.pad_sequence([ys[j] for j in b], batch_first=True, padding_value=-100)
+            logits, _ = model(X)
+            total += nn.functional.cross_entropy(logits.reshape(-1, logits.shape[-1]), Y.reshape(-1),
+                                                 ignore_index=-100, reduction="sum").item()
+            count += int((Y != -100).sum())
+    model.train()
+    return math.exp(total / count)
+
+
+def train_word_rnn(model, xs, ys, val_xs, val_ys, steps=4000, length=64, batch_size=64, lr=3e-3,
+                   clip=1.0, eval_every=500):
+    """Truncated BPTT on random chunks of the concatenated training stories, as for characters.
+
+    Keeps the parameters with the best validation perplexity (on val_xs, val_ys); the learning rate
+    drops to 1e-3 after 70% of the steps. Returns (step, words seen, validation perplexity) every
+    eval_every steps."""
+    X = torch.cat(xs)
+    Y = torch.cat(ys)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    curve = []
+    best = (math.inf, None)
+    start = time.time()
+    for step in range(1, steps + 1):
+        starts = torch.randint(0, len(X) - length, (batch_size,))
+        x = torch.stack([X[s:s + length] for s in starts])
+        y = torch.stack([Y[s:s + length] for s in starts])
+        logits, _ = model(x)
+        loss = nn.functional.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))
+        opt.zero_grad()
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), clip)
+        opt.step()
+        if step % eval_every == 0:
+            ppl = story_perplexity(model, val_xs, val_ys)
+            curve.append((step, step * batch_size * length, ppl))
+            print(f"step {step:5d}   validation perplexity {ppl:.2f}   ({time.time() - start:.0f} s)")
+            if ppl < best[0]:
+                best = (ppl, {k: v.clone() for k, v in model.state_dict().items()})
+        if step == int(steps * 0.7):
+            for group in opt.param_groups:
+                group["lr"] = 1e-3
+    if best[1] is not None:
+        model.load_state_dict(best[1])
+    return curve

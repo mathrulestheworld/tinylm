@@ -24,11 +24,11 @@ This notebook follows the lecture. Each part is a stop in the talk: the slides g
 | Part | What happens | Lecture notes |
 |---|---|---|
 | 1. Counting | A bigram model of four sentences, by hand; Shannon's experiment on TinyStories | §§1–2 |
-| 2. Smoothing and evaluation | Sparsity, smoothing, perplexity, honest validation and test splits | §§2–3 |
-| 3. Word vectors from counts | Co-occurrence counts, PMI, and an SVD | §4 |
-| 4. word2vec | Skip-gram with negative sampling, trained live; the vectors in 2-D and 3-D; nearest-neighbor search; why it agrees with counting | §4 |
-| 5. A neural language model | The model of Bengio et al. (2003): build it, train it, look inside | §5 |
-| 6. Take home: recurrent networks | A character-level RNN and LSTM to run and modify | §6 |
+| 2. Smoothing and evaluation | Sparsity, perplexity, smoothing, honest validation and test splits | §§2–4 |
+| 3. Word vectors from counts | Co-occurrence counts, PMI, and an SVD | §5 |
+| 4. word2vec | Skip-gram with negative sampling, trained live; the vectors in 2-D and 3-D; nearest-neighbor search; why it agrees with counting | §5 |
+| 5. Neural language models | The bigram model as a network; word vectors; the model of Bengio et al. (2003): build it, train it, look inside | §6 |
+| 6. Take home: recurrent networks | Character-level RNN and LSTM: reading, sampling, temperature, a quotation cell; a word-level LSTM | §§7–8 |
 
 **Data.** [TinyStories](https://arxiv.org/abs/2305.07759) (Eldan and Li, 2023): short stories in simple English. We use its validation file (about 22,000 stories, 19 MB; downloaded on first run into `data/`) and split it by story into 80% training, 10% validation, and 10% test, with a fixed seed, so the numbers match the lecture notes.
 
@@ -392,7 +392,75 @@ plt.show()
 
 # ============================================================================= Part 5
 md(r"""
-# Part 5: A neural language model
+# Part 5: Neural language models
+
+Three steps, as in the lecture notes (§6) and Karpathy's [makemore](https://www.youtube.com/watch?v=PaCmpygFfXo) lectures: the bigram model computed by a network, the same network with its matrix factored through word vectors, and the fixed-window model of Bengio et al. (2003).
+
+## 5.1 The bigram model as a network
+
+A one-hot vector times a weight matrix $W$ picks out a row of $W$; the softmax turns the row into probabilities. Trained by gradient descent on the log loss, the rows must converge to the relative frequencies of §2: maximum likelihood is the same whether computed by counting or by descent. Characters keep the matrix small ($34 \times 34$).
+""")
+
+code(r"""
+char_alpha = neural.char_alphabet(char_train)
+end_id = char_alpha.index(neural.STORY_END)
+pairs_train = torch.cat([torch.tensor([end_id]), neural.encode_chars(char_train, char_alpha)])
+pairs_test = torch.cat([torch.tensor([end_id]), neural.encode_chars(char_test, char_alpha)])
+a_tr, b_tr, a_te, b_te = pairs_train[:-1], pairs_train[1:], pairs_test[:-1], pairs_test[1:]
+K = len(char_alpha)
+
+# counting
+N = torch.zeros(K, K)
+N.index_put_((a_tr, b_tr), torch.ones(len(a_tr)), accumulate=True)
+P_count = (N + 0.01) / (N.sum(1, keepdim=True) + 0.01 * K)        # a little add-alpha for the 4 unseen held-out pairs
+bits = lambda P, a, b: float(-torch.log2(P[a, b]).mean())
+
+# the network, trained by minibatch gradient descent
+torch.manual_seed(0)
+net = neural.BigramNet(K, K)
+opt = torch.optim.Adam(net.parameters(), lr=0.1)
+start = time.time()
+for step in range(1, 3001):
+    i = torch.randint(0, len(a_tr), (4096,))
+    loss = torch.nn.functional.cross_entropy(net(a_tr[i]), b_tr[i])
+    opt.zero_grad(); loss.backward(); opt.step()
+    if step == 2100:
+        for g in opt.param_groups: g["lr"] = 0.01
+P_net = torch.softmax(net.W.weight.detach(), 1)
+print(f"counting:    training {bits(P_count, a_tr, b_tr):.3f}   held-out {bits(P_count, a_te, b_te):.3f} bits per character")
+print(f"the network: training {bits(P_net, a_tr, b_tr):.3f}   held-out {bits(P_net, a_te, b_te):.3f} bits per character"
+      f"   ({time.time() - start:.0f} s; uniform would be {math.log2(K):.2f})")
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4.6))
+for ax, P, title in [(axes[0], P_count, "counting"), (axes[1], P_net, "the network")]:
+    ax.imshow(P ** 0.5, cmap="Blues")
+    ax.set_xticks(range(K)); ax.set_xticklabels(["␣" if c == " " else c for c in char_alpha], fontsize=6)
+    ax.set_yticks(range(K)); ax.set_yticklabels(["␣" if c == " " else c for c in char_alpha], fontsize=6)
+    ax.set_title(title); ax.set_xlabel("next character"); ax.set_ylabel("previous character")
+plt.tight_layout(); plt.show()
+""")
+
+md(r"""
+## 5.2 From a table to word vectors
+
+For words the same matrix would be $8{,}682 \times 8{,}681$, 75 million numbers, each row learned only from its own word. Factor it: $q(\cdot\mid v) = \operatorname{softmax}(\mathbf b + U\,C(v))$ with a 64-dimensional vector $C(v)$ per word. Similar words must now share. The notes train it for two passes (about 14,000 steps, 13 minutes on a laptop) to a test perplexity of 49.9; here a shorter run.
+""")
+
+code(r"""
+BIGRAM_STEPS = 3000 if QUICK else 4000                  # 14,000 for the notes' two passes
+index = neural.word_index(vocab)
+X1, Y1 = neural.make_windows(train, index, context=1)
+X1_val, Y1_val = neural.make_windows(val, index, context=1)
+torch.manual_seed(0)
+fb = neural.BigramNet(len(vocab) + 1, len(vocab), embed_dim=64)
+print(f"{sum(p.numel() for p in fb.parameters()):,} parameters, against {(len(vocab) + 1) * len(vocab):,} for the full matrix")
+start = time.time()
+neural.train_window_lm(fb, X1, Y1, X1_val[:50000], Y1_val[:50000], epochs=2, eval_every=1000, max_steps=BIGRAM_STEPS)
+print(f"({time.time() - start:.0f} s)   Kneser-Ney bigram: {results[('Kneser-Ney', 2)]:.1f}")
+""")
+
+md(r"""
+## 5.3 The fixed-window model
 
 Bengio, Ducharme, Vincent, and Jauvin (2003) predicted the next word from the previous four through learned word vectors:
 $$q(\cdot \mid x_{t-4:t-1}) = \operatorname{softmax}\big(\mathbf b + U \tanh(\mathbf d + H[C(x_{t-4}); \dots; C(x_{t-1})])\big).$$
@@ -403,7 +471,6 @@ code(r"""
 import inspect
 print(inspect.getsource(neural.FixedWindowLM))
 
-index = neural.word_index(vocab)
 X_train, Y_train = neural.make_windows(train, index, context=4)
 X_val, Y_val = neural.make_windows(val, index, context=4)
 X_test, Y_test = neural.make_windows(test, index, context=4)
@@ -489,13 +556,12 @@ plt.tight_layout(); plt.show()
 md(r"""
 # Part 6 (take home): recurrent language models
 
-A fixed window forgets everything more than four words back. A recurrent network keeps a state that it updates once per token, $\mathbf h_t = \tanh(W\mathbf h_{t-1} + V\mathbf e_t + \mathbf d)$, with the same weights at every step; the LSTM adds a cell updated *additively*, $\mathbf c_t = \mathbf f_t\odot\mathbf c_{t-1} + \mathbf i_t\odot\mathbf g_t$, so gradients can reach far back. The models are character-level: they read and write one character at a time. They are defined in [`tinylm/neural.py`](../tinylm/neural.py) (`CharRNN`, `train_char_rnn`).
+This part follows §§7–8 of the notes and Karpathy's essay [*The Unreasonable Effectiveness of Recurrent Neural Networks*](https://karpathy.github.io/2015/05/21/rnn-effectiveness/). A fixed window forgets everything more than four words back. A recurrent network keeps a state that it updates once per token, $\mathbf h_t = \tanh(W\mathbf h_{t-1} + V\mathbf e_t + \mathbf d)$, with the same weights at every step; the LSTM adds a cell updated *additively*, $\mathbf c_t = \mathbf f_t\odot\mathbf c_{t-1} + \mathbf i_t\odot\mathbf g_t$, so gradients can reach far back. The models are character-level: they read and write one character at a time. They are defined in [`tinylm/neural.py`](../tinylm/neural.py) (`CharRNN`, `train_char_rnn`).
 
 Both were trained for 3,000 steps of 64 chunks of 128 characters (about 25 million characters; the LSTM takes about ten minutes on a laptop) by `tools/train_week02_checkpoints.py`. The cell below loads them; the one after it trains a fresh model for a minute so you can watch.
 """)
 
 code(r"""
-char_alpha = neural.char_alphabet(char_train)
 train_stream = neural.encode_chars(char_train, char_alpha)
 test_stream = neural.encode_chars(char_test, char_alpha)
 models = {}
@@ -518,11 +584,98 @@ ax.set_xlabel("steps back from the prediction"); ax.set_ylabel("gradient norm (r
 ax.set_title("how far back the gradient reaches", fontsize=10); ax.legend(); plt.show()
 """)
 
+md(r"""
+## Reading a phrase
+
+At each step the network reads one character and outputs a distribution over the next. Here are the plain RNN's four most probable next characters along a phrase, with the probability it gave the character that actually came next (after Karpathy's "hello" example).
+""")
+
+code(r"""
+def read_phrase(model, phrase):
+    ix = {c: i for i, c in enumerate(char_alpha)}
+    x = torch.tensor([[ix[neural.STORY_END]] + [ix[c] for c in phrase]])
+    with torch.no_grad():
+        P = torch.softmax(model(x)[0][0], -1)
+    for t, nxt in enumerate(phrase):
+        top = torch.topk(P[t], 4)
+        shown = "  ".join(f"{char_alpha[j]!r} {v:.2f}" for v, j in zip(top.values.tolist(), top.indices.tolist()))
+        read = "start" if t == 0 else repr(phrase[t - 1])
+        print(f"read {read:7s} next {nxt!r}: p = {P[t, ix[nxt]]:.2f}   top four: {shown}")
+
+read_phrase(models["rnn"], "the dog barked")
+""")
+
+md(r"""
+## Temperature
+
+Dividing the scores by a temperature $T$ before the softmax raises each probability to the power $1/T$: $T < 1$ sharpens, $T > 1$ flattens.
+""")
+
+code(r"""
+for T in [0.5, 1.0, 1.5]:
+    print(f"T = {T}:", neural.sample_chars(models["lstm"], char_alpha, max_chars=300, temperature=T, seed=1), "\n")
+""")
+
+md(r"""
+## A quotation cell
+
+Karpathy, Johnson, and Fei-Fei (2015) found LSTM cells that switch on inside quotations. Search the 256 cells of our LSTM for the one whose value best tracks being inside a quotation, over 50 held-out stories, and color an excerpt by it (red positive, blue negative).
+""")
+
+code(r"""
+from IPython.display import HTML
+lstm = models["lstm"]
+text = "".join(t + neural.STORY_END for t in char_test[:50])
+x = neural.encode_chars(char_test[:50], char_alpha)[None]
+cells = []
+with torch.no_grad():
+    state = None
+    for t in range(x.shape[1]):                       # one step at a time, to read the cell c_t
+        _, state = lstm.rnn(lstm.emb(x[:, t:t + 1]), state)
+        cells.append(state[1][0, 0].clone())
+cells = torch.stack(cells).numpy()
+inside, flag = np.zeros(len(text)), 0
+for i, ch in enumerate(text):
+    flag = 0 if ch == neural.STORY_END else (1 - flag if ch == '"' else flag)
+    inside[i] = flag
+corr = np.array([np.corrcoef(cells[:, u], inside)[0, 1] for u in range(cells.shape[1])])
+u = int(np.nanargmax(np.abs(corr)))
+print(f"cell {u}: correlation {corr[u]:.2f} with being inside a quotation")
+start = text.index('"', 2000) - 120
+vals = cells[start:start + 400, u] / np.abs(cells[start:start + 400, u]).max()
+spans = "".join(f'<span style="background: rgba({255 if v > 0 else 60},{90 if v > 0 else 110},{90 if v > 0 else 255},{abs(v):.2f})">{c}</span>'
+                for c, v in zip(text[start:start + 400], vals))
+HTML(f'<div style="font-family: monospace; line-height: 1.6; max-width: 46em">{spans}</div>')
+""")
+
+md(r"""
+## Watching it learn
+
+Train a fresh, smaller LSTM for a minute and sample from it as it goes, as Karpathy's essay does: random characters, then spaces and common letters, then words.
+""")
+
 code(r"""
 torch.manual_seed(0)
 student = neural.CharRNN(len(char_alpha), kind="lstm", hidden=128)
-curve = neural.train_char_rnn(student, train_stream, test_stream[:20000], steps=200, eval_every=50)
-print(neural.sample_chars(student, char_alpha, temperature=0.8))
+print("untrained:", neural.sample_chars(student, char_alpha, max_chars=120, seed=3))
+for rounds in range(4):
+    neural.train_char_rnn(student, train_stream, test_stream[:20000], steps=50, eval_every=50)
+    print(f"after {50 * (rounds + 1)} steps:", neural.sample_chars(student, char_alpha, max_chars=120, seed=3), "\n")
+""")
+
+md(r"""
+## Words instead of characters
+
+The same LSTM over words, sized like the fixed-window model (64-dimensional word vectors, 128 units, about 1.8 million parameters), scored story by story on the same prediction events as the n-gram models. `tools/train_week02_checkpoints.py word` trains it (about 20 minutes on a laptop).
+""")
+
+code(r"""
+wl = neural.WordLSTM(len(vocab) + 1, len(vocab), embed_dim=64, hidden=128)
+wl.load_state_dict(torch.load(ROOT / "checkpoints" / "week02_word_lstm.pt"))
+sx, sy = neural.story_tensors(test, index)
+print(f"{sum(p.numel() for p in wl.parameters()):,} parameters")
+print(f"test perplexity: word LSTM {neural.story_perplexity(wl, sx, sy):.1f}, fixed window "
+      f"{math.exp(neural.average_loss(lm, X_test, Y_test)):.1f}, Kneser-Ney 4-gram {results[('Kneser-Ney', 4)]:.1f}")
 """)
 
 md(r"""
@@ -532,7 +685,7 @@ md(r"""
 2. **Longer chunks.** Train with `length=32` and `length=256`. Truncated backpropagation through time sees at most `length` steps back; does the held-out loss change?
 3. **Width.** Compare `hidden=64, 128, 256, 512` for the LSTM at a fixed number of steps. Plot held-out bits per character against the number of parameters.
 4. **Temperature.** Sample from the LSTM at temperatures 0.5, 1.0, and 1.5. Which looks most like a story, and which has the lowest loss?
-5. **Words, not characters.** Change `FixedWindowLM` into a word-level recurrent model: replace the concatenated window by an `nn.LSTM` over the word vectors. Does it beat the fixed window's perplexity?
+5. **A bigger word LSTM.** Train `WordLSTM` with 256 or 512 units with `neural.train_word_rnn`. How does its test perplexity move against its number of parameters, and against the Kneser–Ney 4-gram?
 6. **Your own embeddings.** Train skip-gram with `dim=20` and `dim=300`, and with windows of 1 and 5. Which gives better neighbors? Which gives better analogies?
 """)
 

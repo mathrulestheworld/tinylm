@@ -14,3 +14,5 @@ checkpoints/*
 !checkpoints/week02_char_rnn.json
 .venv/
 .DS_Store
+!checkpoints/week02_word_lstm.pt
+!checkpoints/week02_word_lstm.json
