@@ -4,6 +4,7 @@
     python3 tools/train_week02_checkpoints.py rnn       # about 4 minutes
     python3 tools/train_week02_checkpoints.py word      # the word-level LSTM, about 20 minutes
     python3 tools/train_week02_checkpoints.py lstm 6000 512   # 512 units, 6,000 steps: about an hour
+    python3 tools/train_week02_checkpoints.py word2vec  # skip-gram vectors for the hands-on notebook, about 4 minutes
 
 Writes checkpoints/week02_char_<kind>.pt and checkpoints/week02_char_<kind>.json (learning curve,
 sample, gradient by distance); a width other than 256 is added to the name (week02_char_lstm512.pt).
@@ -22,6 +23,26 @@ from tinylm.neural import CharRNN, char_alphabet, encode_chars, train_char_rnn, 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 kind = sys.argv[1]
+
+if kind == "word2vec":
+    # The skip-gram run of Part 4 of the full notebook (ten passes), saved for the in-class notebook:
+    # the words, their vectors before and after training, and the shifted-PMI check.
+    import numpy as np
+    from tinylm.data import tinystories_words
+    from tinylm import embeddings
+    data = tinystories_words(ROOT / "data")
+    text = embeddings.content_words(data["train"])
+    _, word_counts = embeddings.frequent_words(text, how_many=3000)
+    w2v_words, _ = embeddings.frequent_words(text, min_count=5)
+    model, info = embeddings.train_skipgram(text, w2v_words, word_counts, dim=100, passes=10)
+    predicted, learned = embeddings.shifted_pmi_check(model, info, min_count=20)
+    (ROOT / "checkpoints").mkdir(exist_ok=True)
+    torch.save({"words": w2v_words, "after": model.v.weight.detach().clone(),
+                "before": torch.tensor(info["before"]).half(),
+                "pmi_check": torch.tensor(np.stack([predicted, learned]), dtype=torch.float)},
+               ROOT / "checkpoints" / "week02_word2vec.pt")
+    print(f"{len(w2v_words):,} words; shifted-PMI correlation {np.corrcoef(predicted, learned)[0, 1]:.2f}")
+    sys.exit()
 
 if kind == "word":
     from tinylm.data import tinystories_words

@@ -18,3 +18,4 @@ checkpoints/*
 !checkpoints/week02_word_lstm.json
 !checkpoints/week02_char_lstm512.pt
 !checkpoints/week02_char_lstm512.json
+!checkpoints/week02_word2vec.pt
