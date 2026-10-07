@@ -8,8 +8,8 @@ from tinylm.data import END
 from tinylm.ngram import (BOS, NGramModel, KneserNeyModel, ngram_events, log_loss, perplexity,
                           unseen_fraction, good_turing_unseen, sample)
 
-CORPUS = [s.split() for s in ["the cat sleeps", "the cat eats", "the dog sleeps", "a dog eats"]]
-VOCAB = ["the", "a", "cat", "dog", "sleeps", "eats", END]
+CORPUS = [s.split() for s in ["the cat sleeps", "the cat eats fish", "the dog sleeps", "a dog eats"]]
+VOCAB = ["the", "a", "cat", "dog", "sleeps", "eats", "fish", END]
 
 
 def sentence_prob(model, sentence):
@@ -27,14 +27,15 @@ def test_events_pad_and_end():
 def test_maximum_likelihood_worked_example():
     m = NGramModel(CORPUS, 2, VOCAB, alpha=Fraction(0))
     assert sentence_prob(m, "the cat sleeps") == Fraction(1, 4)
-    assert sentence_prob(m, "the dog eats") == Fraction(1, 8)
+    assert sentence_prob(m, "the dog eats") == Fraction(1, 16)
+    assert sentence_prob(m, "the cat eats fish") == Fraction(1, 8)
     assert sentence_prob(m, "a cat sleeps") == 0
 
 
 def test_add_one_worked_example():
     m = NGramModel(CORPUS, 2, VOCAB, alpha=Fraction(1))
-    assert sentence_prob(m, "a cat sleeps") == Fraction(1, 594)
-    assert sentence_prob(m, "the cat sleeps") == Fraction(4, 495)
+    assert sentence_prob(m, "a cat sleeps") == Fraction(1, 900)
+    assert sentence_prob(m, "the cat sleeps") == Fraction(3, 550)
 
 
 def test_distributions_sum_to_one():
@@ -70,9 +71,9 @@ def test_zero_probability_gives_infinite_loss():
 def test_unseen_and_good_turing():
     assert unseen_fraction(CORPUS, CORPUS, 2) == 0
     assert unseen_fraction(CORPUS, [["a", "cat", "sleeps"]], 2) == 0.25        # "a cat" is new
-    # bigrams in CORPUS: 16 events; seen once: (BOS,a), (the,dog), (a,dog), (cat,sleeps),
-    # (cat,eats), (dog,sleeps), (dog,eats) -> 7
-    assert good_turing_unseen(CORPUS, 2) == 7 / 16
+    # bigrams in CORPUS: 17 events; seen once: (BOS,a), (the,dog), (a,dog), (cat,sleeps), (cat,eats),
+    # (dog,sleeps), (dog,eats), (eats,fish), (eats,END), (fish,END) -> 10
+    assert good_turing_unseen(CORPUS, 2) == 10 / 17
 
 
 def test_sample_ends_and_stays_in_support():
@@ -80,4 +81,23 @@ def test_sample_ends_and_stays_in_support():
     rng = np.random.default_rng(1)
     for _ in range(20):
         s = sample(m, rng)
-        assert 2 <= len(s) <= 3 and s[0] in ("the", "a")
+        assert 2 <= len(s) <= 4 and s[0] in ("the", "a")
+
+
+def test_tree_of_complete_sentences():
+    # The worked example's tree (notes, Figure 2a): nine complete sentences at two depths, summing to one.
+    m = NGramModel(CORPUS, 2, VOCAB, alpha=Fraction(0))
+
+    def walk(prefix, p):
+        for w, q in m.distribution((BOS,) + prefix).items():
+            if q == 0:
+                continue
+            if w == END:
+                yield prefix, p * q
+            else:
+                yield from walk(prefix + (w,), p * q)
+
+    leaves = dict(walk((), Fraction(1)))
+    assert len(leaves) == 9 and sum(leaves.values()) == 1
+    assert {len(s) for s in leaves} == {3, 4}
+    assert leaves[("the", "cat", "eats", "fish")] == Fraction(1, 8)

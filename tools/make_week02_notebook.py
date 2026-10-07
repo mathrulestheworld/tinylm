@@ -23,7 +23,7 @@ This notebook follows Lecture 2, *Language Modeling: From Counts to Neural Netwo
 
 | Part | What happens | Lecture notes |
 |---|---|---|
-| 1. Counting | A bigram model of four sentences, by hand; Shannon's experiment on TinyStories | §§1–2 |
+| 1. Counting | A bigram model of four sentences, by hand: its table, its tree of complete sentences, why counting is maximum likelihood, and a zero; Shannon's experiment on TinyStories | §§1–2 |
 | 2. Smoothing and evaluation | Sparsity, perplexity, smoothing, honest validation and test splits | §§2–4 |
 | 3. Word vectors from counts | Co-occurrence counts, PMI, and an SVD | §5 |
 | 4. word2vec | Skip-gram with negative sampling, trained live; the vectors in 2-D and 3-D; nearest-neighbor search; why it agrees with counting | §5 |
@@ -70,18 +70,18 @@ md(r"""
 
 A **bigram model** predicts each word from the one before it. Its maximum-likelihood estimate is a table of relative frequencies,
 $$q(w \mid h) = \frac{c(h, w)}{c(h)},$$
-where $c(h, w)$ counts how often $w$ follows $h$. Every sentence starts with the context BOS and ends by predicting END, so the probability of a complete sentence includes the probability of stopping.
+where $c(h, w)$ counts how often $w$ follows $h$. Every sentence starts with the context BOS (written `<s>`), which is never predicted, and ends by predicting END, so the probability of a complete sentence includes the probability of stopping.
 
 *In class:* before running the next cell, guess the word after *the*.
 """)
 
 code(r"""
-corpus = [s.split() for s in ["the cat sleeps", "the cat eats", "the dog sleeps", "a dog eats"]]
-toy_vocab = ["the", "a", "cat", "dog", "sleeps", "eats", END]
+corpus = [s.split() for s in ["the cat sleeps", "the cat eats fish", "the dog sleeps", "a dog eats"]]
+toy_vocab = ["the", "a", "cat", "dog", "sleeps", "eats", "fish", END]
 bigram = ngram.NGramModel(corpus, 2, toy_vocab)        # alpha = 0: maximum likelihood
 
 print(f"{'history':>9s} " + " ".join(f"{w:>7s}" for w in toy_vocab))
-for h in [ngram.BOS, "the", "a", "cat", "dog", "sleeps", "eats"]:
+for h in [ngram.BOS, "the", "a", "cat", "dog", "sleeps", "eats", "fish"]:
     print(f"{h:>9s} " + " ".join(f"{bigram.prob((h,), w):7.2f}" for w in toy_vocab))
 """)
 
@@ -100,8 +100,42 @@ print("\nsamples:", [" ".join(ngram.sample(bigram, rng)) for _ in range(6)])
 """)
 
 md(r"""
-*the dog eats* never occurred, but each of its transitions did, so it gets probability 1/8. *a cat sleeps* is a fine sentence, but *a cat* never occurred, so it gets probability **zero**. A table of counts can recombine pieces it has seen; it can say nothing about a piece it has not.
+*the dog eats* never occurred, but each of its transitions did, so it gets probability 1/16. *a cat sleeps* is a fine sentence, but *a cat* never occurred, so it gets probability **zero**. A table of counts can recombine pieces it has seen; it can say nothing about a piece it has not.
 
+### The model as a tree
+
+Every complete sentence is a path from BOS to an END leaf, and its probability is the product of the branch probabilities along the path (Figure 2a of the notes). The cell below walks this model's tree of prefixes and lists every complete sentence it can generate. The sentences end at different depths, and their probabilities add up to one. *a cat sleeps* is not among them.
+""")
+
+code(r"""
+def complete_sentences(model, prefix=(), p=1.0, max_words=8):
+    # walk the tree of prefixes: each branch is one more token, labeled with its probability
+    for word, q in model.distribution((ngram.BOS,) + prefix).items():
+        if q == 0:
+            continue
+        if word == END:
+            yield " ".join(prefix), p * q                    # an END leaf: a complete sentence
+        elif len(prefix) < max_words:
+            yield from complete_sentences(model, prefix + (word,), p * q, max_words)
+
+leaves = sorted(complete_sentences(bigram), key=lambda leaf: -leaf[1])
+for sentence, p in leaves:
+    print(f"{p:.4f}  {sentence}")
+print(f"\n{len(leaves)} complete sentences; total probability {sum(p for _, p in leaves):.4f}")
+""")
+
+md(r"""
+### Counting is maximum likelihood
+
+Why relative frequencies? They are the probabilities that make the training text most probable. In the training sentences *cat* is followed once by *sleeps* and once by *eats*, so the log-likelihood of the training text depends on $p = q(\text{sleeps}\mid\text{cat})$ through $\log p + \log(1-p)$. It is largest at $p = 1/2$, the relative frequency. (The same argument with a Lagrange multiplier for each row gives $c(h,w)/c(h)$ in general.)
+""")
+
+code(r"""
+for p in [0.3, 0.4, 0.5, 0.6, 0.7]:
+    print(f"q(sleeps | cat) = {p:.1f}:  log-likelihood of the cat row = {math.log(p) + math.log(1 - p):.4f}")
+""")
+
+md(r"""
 ## 1.2 Shannon's experiment, repeated
 
 In 1948 Shannon generated text from approximations to English that used more and more context. Here are character models of TinyStories that choose each character from the previous $n-1$, with probabilities equal to relative frequencies in 6,000 training stories, and then word models.
@@ -195,7 +229,7 @@ for alpha in [0, 0.01, 0.1, 0.5, 1]:
 """)
 
 md(r"""
-Validation picks $\alpha = 0.1$; its test loss, 0.727 nats per token (perplexity 2.07), is the number to report. Choosing on the test set would have picked $\alpha = 0$, because every transition of the two test sentences happens to occur in training; that model gives the validation sentences probability zero.
+Validation picks $\alpha = 0.1$; its test loss, 0.842 nats per token (perplexity 2.32), is the number to report. Choosing on the test set would have picked $\alpha = 0$, because every transition of the two test sentences happens to occur in training; that model gives the validation sentences probability zero.
 
 ## 2.4 How much does more context help?
 
