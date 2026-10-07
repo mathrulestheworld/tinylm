@@ -19,7 +19,7 @@ md(r"""
 
 *Generative AI from First Principles* · [course page](https://mathrulestheworld.github.io/genai-first-principles/)
 
-This notebook follows the lecture. Each part is a stop in the talk: the slides give the idea, this notebook shows it working on real text.
+This notebook follows Lecture 2, *Language Modeling: From Counts to Neural Networks*, and its lecture notes. Each part is a stop in the talk: the slides give the idea, this notebook shows it working on real text.
 
 | Part | What happens | Lecture notes |
 |---|---|---|
@@ -28,7 +28,7 @@ This notebook follows the lecture. Each part is a stop in the talk: the slides g
 | 3. Word vectors from counts | Co-occurrence counts, PMI, and an SVD | §5 |
 | 4. word2vec | Skip-gram with negative sampling, trained live; the vectors in 2-D and 3-D; nearest-neighbor search; why it agrees with counting | §5 |
 | 5. Neural language models | The bigram model as a network; word vectors; the model of Bengio et al. (2003): build it, train it, look inside | §6 |
-| 6. Take home: recurrent networks | Character-level RNN and LSTM: why the plain RNN forgets (saturated units, a memory test), reading, sampling, temperature, a quotation cell; a word-level LSTM | §§7–8 |
+| 6. Take home: recurrent networks | Character-level RNN and LSTM: why the plain RNN forgets (saturated units, a memory test), a 512-unit LSTM that beats every n-gram model, reading, sampling, temperature, a quotation cell; a word-level LSTM | §§7–8 |
 
 **Data.** [TinyStories](https://arxiv.org/abs/2305.07759) (Eldan and Li, 2023): short stories in simple English. We use its validation file (about 22,000 stories, 19 MB; downloaded on first run into `data/`) and split it by story into 80% training, 10% validation, and 10% test, with a fixed seed, so the numbers match the lecture notes.
 
