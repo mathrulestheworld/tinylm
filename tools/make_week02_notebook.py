@@ -28,7 +28,7 @@ This notebook follows the lecture. Each part is a stop in the talk: the slides g
 | 3. Word vectors from counts | Co-occurrence counts, PMI, and an SVD | §5 |
 | 4. word2vec | Skip-gram with negative sampling, trained live; the vectors in 2-D and 3-D; nearest-neighbor search; why it agrees with counting | §5 |
 | 5. Neural language models | The bigram model as a network; word vectors; the model of Bengio et al. (2003): build it, train it, look inside | §6 |
-| 6. Take home: recurrent networks | Character-level RNN and LSTM: reading, sampling, temperature, a quotation cell; a word-level LSTM | §§7–8 |
+| 6. Take home: recurrent networks | Character-level RNN and LSTM: why the plain RNN forgets (saturated units, a memory test), reading, sampling, temperature, a quotation cell; a word-level LSTM | §§7–8 |
 
 **Data.** [TinyStories](https://arxiv.org/abs/2305.07759) (Eldan and Li, 2023): short stories in simple English. We use its validation file (about 22,000 stories, 19 MB; downloaded on first run into `data/`) and split it by story into 80% training, 10% validation, and 10% test, with a fixed seed, so the numbers match the lecture notes.
 
@@ -199,7 +199,7 @@ Validation picks $\alpha = 0.1$; its test loss, 0.727 nats per token (perplexity
 
 ## 2.4 How much does more context help?
 
-Character models of increasing order $n$, smoothed with Kneser–Ney: bits per character on the training text and on held-out stories, and the fraction of held-out characters whose $n$-gram was never seen in training (to which an unsmoothed model assigns probability zero). The loss on the training text keeps falling; the held-out loss improves more and more slowly, and the gap between the two is overfitting. This cell takes about six minutes (with `QUICK = True`, two); in class, show Figure 1 of the notes.
+Character models of increasing order $n$, smoothed with Kneser–Ney: bits per character on the training text and on held-out stories, and the fraction of held-out characters whose $n$-gram was never seen in training (to which an unsmoothed model assigns probability zero). The loss on the training text keeps falling; the held-out loss improves more and more slowly, and the gap between the two is overfitting. This cell takes about six minutes (with `QUICK = True`, two); in class, show Figure 4 of the notes.
 """)
 
 code(r"""
@@ -575,6 +575,23 @@ print(f"best character n-gram (Part 2.4): {best_char_ngram:.3f} bits per charact
 print("\nLSTM sample:", neural.sample_chars(models["lstm"], char_alpha, temperature=0.8))
 """)
 
+md(r"""
+A wider LSTM, trained longer, goes past every n-gram model: `tools/train_week02_checkpoints.py lstm 6000 512` trains 512 units for 6,000 steps on the same 6,000 stories (about an hour on two CPU cores). If its checkpoint is present, the cell below scores it and samples from it.
+""")
+
+code(r"""
+path = ROOT / "checkpoints" / "week02_char_lstm512.pt"
+if path.exists():
+    big = neural.CharRNN(len(char_alpha), kind="lstm", hidden=512)
+    big.load_state_dict(torch.load(path))
+    print(f"LSTM, 512 units: {sum(p.numel() for p in big.parameters()):,} parameters, "
+          f"held-out {neural.char_bits_per_char(big, test_stream):.3f} bits per character\n")
+    for seed in [1, 2, 3]:
+        print(neural.sample_chars(big, char_alpha, max_chars=400, temperature=0.8, seed=seed), "\n")
+else:
+    print("no checkpoint: run tools/train_week02_checkpoints.py lstm 6000 512")
+""")
+
 code(r"""
 fig, ax = plt.subplots(figsize=(5.5, 3.4))
 for kind in ["rnn", "lstm"]:
@@ -582,6 +599,67 @@ for kind in ["rnn", "lstm"]:
     ax.semilogy(g[:150] / g[0], label=kind)
 ax.set_xlabel("steps back from the prediction"); ax.set_ylabel("gradient norm (relative)")
 ax.set_title("how far back the gradient reaches", fontsize=10); ax.legend(); plt.show()
+""")
+
+md(r"""
+## Why the plain RNN forgets
+
+Each step multiplies the gradient by the weight matrix $W$ and by the slopes $1-h^2$ of the tanh units (§7 of the notes). A unit near $\pm1$ is *saturated*: its slope is nearly 0, and almost no gradient passes through it. Karpathy shows this in [*Building makemore Part 3*](https://youtu.be/P6sfmUTpUmc) with a picture of the activations, white where a unit is saturated. Here is the picture for our plain RNN reading 120 characters of a held-out story: one row per unit, one column per character.
+""")
+
+code(r"""
+rnn = models["rnn"]
+with torch.no_grad():
+    h, _ = rnn.rnn(rnn.emb(test_stream[None, 2000:2120]))
+h = h[0].numpy()                                     # (120 characters, 256 units)
+print(f"saturated (|h| > 0.99): {(np.abs(h) > 0.99).mean():.0%} of the activations; "
+      f"average slope 1 - h^2: {(1 - h ** 2).mean():.2f}")
+print(f"largest singular value of W: {torch.linalg.matrix_norm(rnn.rnn.weight_hh_l0, 2):.1f}  (W is not small)")
+fig, ax = plt.subplots(figsize=(9, 3.2))
+ax.imshow(np.abs(h.T) > 0.99, cmap="gray", interpolation="nearest", aspect="auto")
+ax.set_xlabel("character"); ax.set_ylabel("hidden unit"); ax.set_title("white: saturated", fontsize=10)
+plt.show()
+""")
+
+md(r"""
+### A memory test
+
+Can a network learn to use a token far back? Each sequence is a symbol from eight, then $T$ random noise symbols from eight others, then a query; at the query the network must output the first symbol. Chance is 1/8. The cell below trains a plain RNN and an LSTM from scratch for each gap $T$, with the same budget (each run takes from a few seconds to half a minute). The LSTM's forget-gate biases start at 3, so that a new network keeps 95% of its cell at each step; set `forget_bias=0.0` (PyTorch's default) and watch the LSTM fail too.
+""")
+
+code(r"""
+class MemoryNet(torch.nn.Module):
+    def __init__(self, kind, hidden=64, forget_bias=3.0):
+        super().__init__()
+        self.emb = torch.nn.Embedding(17, 32)
+        self.rnn = (torch.nn.LSTM if kind == "lstm" else torch.nn.RNN)(32, hidden, batch_first=True)
+        if kind == "lstm":                              # PyTorch's gate order: input, forget, candidate, output
+            with torch.no_grad():
+                self.rnn.bias_ih_l0[hidden:2 * hidden] = forget_bias
+                self.rnn.bias_hh_l0[hidden:2 * hidden] = 0.0
+        self.out = torch.nn.Linear(hidden, 8)
+
+    def forward(self, x):
+        return self.out(self.rnn(self.emb(x))[0][:, -1])
+
+def memory_batch(T, n, g):
+    first = torch.randint(0, 8, (n, 1), generator=g)
+    noise = torch.randint(8, 16, (n, T), generator=g)
+    return torch.cat([first, noise, torch.full((n, 1), 16)], 1), first[:, 0]
+
+def memory_test(kind, T, steps=1500, **kw):
+    torch.manual_seed(0); g = torch.Generator().manual_seed(T)
+    net = MemoryNet(kind, **kw); opt = torch.optim.Adam(net.parameters(), lr=3e-3)
+    for _ in range(steps):
+        x, y = memory_batch(T, 128, g)
+        loss = torch.nn.functional.cross_entropy(net(x), y)
+        opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0); opt.step()
+    x, y = memory_batch(T, 4000, torch.Generator().manual_seed(999))
+    with torch.no_grad():
+        return (net(x).argmax(-1) == y).float().mean().item()
+
+for T in [5, 10, 20, 40]:
+    print(f"T = {T:3d}:  plain RNN {memory_test('rnn', T):.2f}   LSTM {memory_test('lstm', T):.2f}")
 """)
 
 md(r"""
@@ -619,7 +697,7 @@ for T in [0.5, 1.0, 1.5]:
 md(r"""
 ## A quotation cell
 
-Karpathy, Johnson, and Fei-Fei (2015) found LSTM cells that switch on inside quotations. Search the 256 cells of our LSTM for the one whose value best tracks being inside a quotation, over 50 held-out stories, and color an excerpt by it (red positive, blue negative).
+Karpathy, Johnson, and Fei-Fei (2015) found LSTM cells that switch on inside quotations. The cell $\mathbf c_t$ of our LSTM is a vector of 256 numbers, recomputed after every character; each coordinate is a *cell unit*. The cell below runs the LSTM over 50 held-out stories and records all 256 cell units after each character. It marks each character 1 if it is inside a quotation (from an opening quotation mark up to its closing mark) and 0 otherwise, and computes, for each unit, the correlation between the unit's value and the mark: near 1 for a unit that is high exactly inside quotations, near 0 for a unit unrelated to them. It then colors an excerpt by the best unit (red positive, blue negative).
 """)
 
 code(r"""
@@ -640,7 +718,8 @@ for i, ch in enumerate(text):
     inside[i] = flag
 corr = np.array([np.corrcoef(cells[:, u], inside)[0, 1] for u in range(cells.shape[1])])
 u = int(np.nanargmax(np.abs(corr)))
-print(f"cell {u}: correlation {corr[u]:.2f} with being inside a quotation")
+print(f"cell unit {u}: correlation {corr[u]:.2f} with being inside a quotation; "
+      f"next best {np.sort(np.abs(corr))[-2]:.2f}; {inside.mean():.0%} of characters are inside")
 start = text.index('"', 2000) - 120
 vals = cells[start:start + 400, u] / np.abs(cells[start:start + 400, u]).max()
 spans = "".join(f'<span style="background: rgba({255 if v > 0 else 60},{90 if v > 0 else 110},{90 if v > 0 else 255},{abs(v):.2f})">{c}</span>'
@@ -686,7 +765,8 @@ md(r"""
 3. **Width.** Compare `hidden=64, 128, 256, 512` for the LSTM at a fixed number of steps. Plot held-out bits per character against the number of parameters.
 4. **Temperature.** Sample from the LSTM at temperatures 0.5, 1.0, and 1.5. Which looks most like a story, and which has the lowest loss?
 5. **A bigger word LSTM.** Train `WordLSTM` with 256 or 512 units with `neural.train_word_rnn`. How does its test perplexity move against its number of parameters, and against the Kneser–Ney 4-gram?
-6. **Your own embeddings.** Train skip-gram with `dim=20` and `dim=300`, and with windows of 1 and 5. Which gives better neighbors? Which gives better analogies?
+6. **How far can the LSTM remember?** Run `memory_test('lstm', T)` for T = 80, 160, 320 with `forget_bias` 1, 3, and 5, and with more steps. Which helps more?
+7. **Your own embeddings.** Train skip-gram with `dim=20` and `dim=300`, and with windows of 1 and 5. Which gives better neighbors? Which gives better analogies?
 """)
 
 nb = nbf.v4.new_notebook()

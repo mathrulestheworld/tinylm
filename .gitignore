@@ -16,3 +16,5 @@ checkpoints/*
 .DS_Store
 !checkpoints/week02_word_lstm.pt
 !checkpoints/week02_word_lstm.json
+!checkpoints/week02_char_lstm512.pt
+!checkpoints/week02_char_lstm512.json

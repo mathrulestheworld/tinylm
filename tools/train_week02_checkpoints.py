@@ -3,11 +3,12 @@
     python3 tools/train_week02_checkpoints.py lstm      # about 10 minutes on a laptop CPU
     python3 tools/train_week02_checkpoints.py rnn       # about 4 minutes
     python3 tools/train_week02_checkpoints.py word      # the word-level LSTM, about 20 minutes
+    python3 tools/train_week02_checkpoints.py lstm 6000 512   # 512 units, 6,000 steps: about an hour
 
-Writes checkpoints/week02_char_<kind>.pt and checkpoints/week02_char_<kind>.json (learning
-curve, sample, gradient by distance). The fixed-window word model in
-checkpoints/week02_fixed_window.pt is trained by the notebook's own training cell with
-TRAIN_FULL = True (about 10 minutes); the script for it is not needed separately.
+Writes checkpoints/week02_char_<kind>.pt and checkpoints/week02_char_<kind>.json (learning curve,
+sample, gradient by distance); a width other than 256 is added to the name (week02_char_lstm512.pt).
+The fixed-window word model in checkpoints/week02_fixed_window.pt is trained by the notebook's own
+training cell with TRAIN_FULL = True (about 10 minutes); the script for it is not needed separately.
 """
 import json
 import sys
