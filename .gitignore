@@ -19,3 +19,11 @@ checkpoints/*
 !checkpoints/week02_char_lstm512.pt
 !checkpoints/week02_char_lstm512.json
 !checkpoints/week02_word2vec.pt
+!checkpoints/week03_translate_attention.pt
+!checkpoints/week03_translate_no_attention.pt
+!checkpoints/week03_reference_weights.json
+!checkpoints/week03_reversal.json
+
+# Answers stay out of the public repository (the instructor keeps them)
+notebooks/*_solution.ipynb
+tools/*_answers.py

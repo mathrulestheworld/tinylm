@@ -10,7 +10,7 @@ The course follows a language model through its whole lifecycle, and this reposi
 |---|---|---|
 | 1 | An autograd engine on NumPy arrays; logistic regression and a two-layer network trained with it | [notebook](notebooks/week01_autograd.ipynb) |
 | 2 | n-gram models with add-alpha and Kneser–Ney smoothing; a sampler; an evaluation harness that measures perplexity; word vectors from counts (PPMI and SVD) and from word2vec, with nearest-neighbor search; the bigram model as a network, and with its matrix factored through word vectors; a neural language model (Bengio et al., 2003); character-level RNN and LSTM models, with why the plain RNN's gradients vanish (saturated units, a memory test), samples, temperature, and a cell that tracks quotations; a wider LSTM that beats every n-gram model; a word-level LSTM | [in class](notebooks/week02_handson.ipynb) (four short stops), [full](notebooks/week02_language_models.ipynb) (every experiment, for study) |
-| 3 | The attention step of a trained English–French translator, written and checked against the trained model; the translator with and without attention; where it looks as it translates | planned |
+| 3 | The attention read of a trained English–French translator, written and checked against the trained model (shapes, masking, the worked example of the notes, the stored weights, BLEU); the translator with and without attention, overall and by sentence length; where it reads as it translates, one reordering and one failure; two interventions | [notebook](notebooks/week03_attention.ipynb) |
 | 4 | A decoder-only Transformer assembled from prepared parts, tested so that later tokens cannot affect earlier predictions and one pass equals one prefix at a time; training and generation | planned |
 | 5 | A byte-level BPE tokenizer, a data pipeline, and a training loop; a few model sizes on one budget, with their held-out loss; an in-context learning test of the base model | planned |
 | 6 | REINFORCE with and without a baseline on one small problem, with the variability of the gradient estimates | planned |
@@ -29,7 +29,7 @@ The course follows a language model through its whole lifecycle, and this reposi
 ```
 git clone https://github.com/mathrulestheworld/tinylm.git
 cd tinylm
-python3 -m pip install -e ".[dev]"      # numpy, PyTorch, matplotlib, scikit-learn, plotly, pytest, jupyter
+python3 -m pip install -e ".[dev]"      # numpy, PyTorch, matplotlib, scikit-learn, plotly, sacrebleu, pytest, jupyter
 python3 -m pytest                        # the checks
 jupyter lab notebooks/                   # the weekly notebooks
 ```
@@ -40,7 +40,8 @@ PyTorch is optional in Week 1 (it is used only to compare gradients) and require
 
 ```
 tinylm/            the package: autograd.py, nn.py, optim.py (Week 1); data.py, ngram.py,
-                   embeddings.py, neural.py (Week 2); more each week
+                   embeddings.py, neural.py (Week 2); translator.py
+                   (Week 3); more each week
 tests/             checks for every component
 notebooks/         one notebook per week, saved with outputs
 tools/             scripts that generate the notebooks and train their checkpoints
