@@ -22,7 +22,7 @@ The course follows a language model through its whole lifecycle, and this reposi
 
 - **From scratch.** Week 1 writes its own autograd, so that nothing later is a black box. From Week 2 on the code uses PyTorch tensors and autograd, which work the same way at scale, but no higher-level libraries (`transformers`, `peft`, `trl`).
 - **Every component has a check.** Gradients against finite differences and PyTorch, a causal-leakage test for the Transformer, a check of the attention read against a trained model, a round trip for the tokenizer, a distribution test for speculative decoding, and so on. They live in `tests/`.
-- **Laptop scale.** Models have up to about ten million parameters and train on small datasets: TinyStories, Tiny Shakespeare, and synthetic arithmetic.
+- **Laptop scale.** Models have up to about ten million parameters and train on small datasets: TinyStories, Tiny Shakespeare, English–French image captions (Multi30k), and synthetic arithmetic.
 
 ## Getting started
 
