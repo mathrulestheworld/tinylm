@@ -11,7 +11,7 @@ The course follows a language model through its whole lifecycle, and this reposi
 | 1 | An autograd engine on NumPy arrays; logistic regression and a two-layer network trained with it | [notebook](notebooks/week01_autograd.ipynb) |
 | 2 | n-gram models with add-alpha and Kneser–Ney smoothing; a sampler; an evaluation harness that measures perplexity; word vectors from counts (PPMI and SVD) and from word2vec, with nearest-neighbor search; the bigram model as a network, and with its matrix factored through word vectors; a neural language model (Bengio et al., 2003); character-level RNN and LSTM models, with why the plain RNN's gradients vanish (saturated units, a memory test), samples, temperature, and a cell that tracks quotations; a wider LSTM that beats every n-gram model; a word-level LSTM | [in class](notebooks/week02_handson.ipynb) (four short stops), [full](notebooks/week02_language_models.ipynb) (every experiment, for study) |
 | 3 | The attention read of a trained English–French translator, written and checked against the trained model (shapes, masking, the worked example of the notes, the stored weights, BLEU); the translator with and without attention, overall and by sentence length; where it reads as it translates, one reordering and one failure; two interventions | [notebook](notebooks/week03_attention.ipynb) |
-| 4 | A decoder-only Transformer assembled from prepared parts, tested so that later tokens cannot affect earlier predictions and one pass equals one prefix at a time; training and generation | planned |
+| 4 | A decoder-only Transformer language model assembled from prepared parts: the attention of all heads at once, and the decoder's forward pass; checked against the hand-worked head of the notes and the trained word model; two tests of the mask (a later token cannot change an earlier prediction; one pass equals one prefix at a time) and a model with a wrong mask that fails them; a short training run; next-word distributions, temperature, and generation | [notebook](notebooks/week04_transformer.ipynb) |
 | 5 | A byte-level BPE tokenizer with a round-trip test; packed batches and a training loop with AdamW, warmup, and cosine decay; optimizers compared; a few model sizes on one budget, with their held-out loss; the base model's in-context copying (induction heads); a chat template and supervised fine-tuning with the loss on the assistant's tokens, with every weight or with LoRA: our first chat model | planned |
 | 6 | REINFORCE with and without a baseline on one small problem, with the variability of the gradient estimates | planned |
 | 7 | DPO on prepared preferences for the Week 5 chat model; GRPO with verifiable rewards on arithmetic as an extension | planned |
@@ -41,7 +41,7 @@ PyTorch is optional in Week 1 (it is used only to compare gradients) and require
 ```
 tinylm/            the package: autograd.py, nn.py, optim.py (Week 1); data.py, ngram.py,
                    embeddings.py, neural.py (Week 2); translator.py
-                   (Week 3); more each week
+                   (Week 3); transformer.py (Week 4); more each week
 tests/             checks for every component
 notebooks/         one notebook per week, saved with outputs
 tools/             scripts that generate the notebooks and train their checkpoints

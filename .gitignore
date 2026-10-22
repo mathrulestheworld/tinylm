@@ -23,6 +23,9 @@ checkpoints/*
 !checkpoints/week03_translate_no_attention.pt
 !checkpoints/week03_reference_weights.json
 !checkpoints/week03_reversal.json
+!checkpoints/week04_word_transformer.pt
+!checkpoints/week04_word_transformer.json
+!checkpoints/week04_leaky.pt
 
 # Answers stay out of the public repository (the instructor keeps them)
 notebooks/*_solution.ipynb
