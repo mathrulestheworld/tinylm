@@ -26,6 +26,12 @@ checkpoints/*
 !checkpoints/week04_word_transformer.pt
 !checkpoints/week04_word_transformer.json
 !checkpoints/week04_leaky.pt
+!checkpoints/week05_base.pt
+!checkpoints/week05_mid.pt
+!checkpoints/week05_chat.pt
+!checkpoints/week05_tokenizer.json
+!checkpoints/week05_runs.json
+!checkpoints/week05_conversations.json
 
 # Answers stay out of the public repository (the instructor keeps them)
 notebooks/*_solution.ipynb
