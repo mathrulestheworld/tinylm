@@ -47,7 +47,7 @@ Lecture 5 takes Week 4's decoder through the steps that made GPT-3 and then Chat
 | Part | What we do |
 |---|---|
 | 1. Tokens | write byte-pair encoding and check it on the notes' ten words; the same loop on the bytes of stories; a round trip; our 4,096-token tokenizer and the running conversation in tokens |
-| 2. Optimizers | write one step of Adam and check the notes' two steps by hand; gradient descent, momentum, and Adam on a quadratic |
+| 2. Optimizers | write one step of Adam and check two steps by hand; gradient descent, momentum, and Adam on a quadratic |
 | 3. Pretraining | packed batches; the learning-rate schedule; four optimizers on a small model; the base model's loss, in nats per token and bits per byte, and its stories |
 | 4. How large a model? | the IsoFLOP runs of the notes: the best size for each budget, and how it grows |
 | 5. The base model | sums from a few examples; copying an invented name, and the head that does it; the running conversation, which it continues and never answers |
@@ -243,7 +243,7 @@ assert END not in ids
     md(r"""
 # 2. Optimizers
 
-Pretraining minimizes the average log loss of next-token prediction by gradient steps; which steps work is the subject of the notes' §6. **Adam** keeps two moving averages for every parameter, of its gradients \(g\) and of their squares, and steps by their ratio. At step \(k\) (counted from 1), with \(m\) and \(v\) starting at zero:
+Pretraining minimizes the average log loss of next-token prediction by gradient steps; which steps work is the subject of the notes' §6 and its companion tutorial, *Optimizers for Deep Learning*. **Adam** keeps two moving averages for every parameter, of its gradients \(g\) and of their squares, and steps by their ratio. At step \(k\) (counted from 1), with \(m\) and \(v\) starting at zero:
 
 1. \(m \leftarrow \beta_1 m + (1-\beta_1)\,g\) and \(v \leftarrow \beta_2 v + (1-\beta_2)\,g^2\), coordinate by coordinate;
 2. the bias corrections \(\hat m = m/(1-\beta_1^k)\) and \(\hat v = v/(1-\beta_2^k)\), since both averages start at zero;
@@ -265,14 +265,14 @@ def adam_step(theta, grad, state, lr, betas=(0.9, 0.95), eps=1e-8):
 """)
 
     md(r"""
-Two checks. The first is the notes' step by hand: two parameters, \(\eta=0.01\), \(\beta=(0.9, 0.95)\), with gradients \(g_1=(0.01,\ 2)\) at step 1, two hundred times apart, and \(g_2=(0.03,\ -1)\) at step 2. Before running: how far does each parameter move at step 1? The second compares 100 steps with PyTorch's Adam.
+Two checks. The first is a step by hand: two parameters, \(\eta=0.01\), \(\beta=(0.9, 0.95)\), with gradients \(g_1=(0.01,\ 2)\) at step 1, two hundred times apart, and \(g_2=(0.03,\ -1)\) at step 2. Before running: how far does each parameter move at step 1? The second compares 100 steps with PyTorch's Adam.
 """)
 
     code(r"""
 def adam_state(theta):
     return {"step": 0, "m": torch.zeros_like(theta), "v": torch.zeros_like(theta)}
 
-# check 1: the notes' two steps by hand
+# check 1: two steps by hand
 theta = torch.zeros(2, dtype=torch.float64)
 state = adam_state(theta)
 for g in ([0.01, 2.0], [0.03, -1.0]):
@@ -483,7 +483,7 @@ plt.tight_layout(); plt.show()
 """)
 
     md(r"""
-Given the running prompt of the notes' §6, the first sentence of Lecture 4's running sentence, the base model writes a story; the small models of the comparison above, trained for seconds, write sentences that do not fit together. `sample` draws one token at a time from the model's distribution at temperature 0.8 (Lecture 4, §8).
+Given the running prompt of the notes' §8, the first sentence of Lecture 4's running sentence, the base model writes a story; the small models of the comparison above, trained for seconds, write sentences that do not fit together. `sample` draws one token at a time from the model's distribution at temperature 0.8 (Lecture 4, §8).
 """)
 
     code(r"""
